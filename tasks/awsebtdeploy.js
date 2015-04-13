@@ -245,15 +245,20 @@ module.exports = function (grunt) {
       grunt.log.write('Swapping environment CNAMEs...');
 
       return qAWS.swapEnvironmentCNAMEs({
-        SourceEnvironmentName: oldEnv.EnvironmentName,
-        DestinationEnvironmentName: newEnv.EnvironmentName
+        SourceEnvironmentName: options.CNAME,
+        DestinationEnvironmentName: options.CNAME2
       }).then(function () {
             grunt.log.ok();
             return oldEnv;
           });
     }
 
-    function swapDeploy(env) {
+    function swapDeployOnly(env) {
+            return swapEnvironmentCNAMEs()
+                .then(waitForHealthPage);
+
+    }
+function swapDeploy(env) {
       return createConfigurationTemplate(env)
           .spread(createNewEnvironment)
           .spread(function (oldEnv, newEnv) {
@@ -421,6 +426,8 @@ module.exports = function (grunt) {
           return inPlaceDeploy(env);
         case 'swapToNew':
           return swapDeploy(env);
+        case 'swapBothEnv':
+          return swapDeployOnly(env);
         case 'manual':
           return;
         default:
@@ -469,30 +476,40 @@ module.exports = function (grunt) {
           });
     }
 
-    function checkEnvironmentExists() {
-      grunt.log.write('Checking that environment with CNAME "' + options.environmentCNAME + '" exists...');
-
-      return qAWS.describeEnvironments({
-        ApplicationName: options.applicationName,
-        IncludeDeleted: false
-      }).then(function (data) {
+    function qAWSCheckEnvironment(environmentCNAME){
+        return qAWS.describeEnvironments({
+            ApplicationName: options.applicationName,
+            IncludeDeleted: false
+        }).then(function (data) {
             grunt.verbose.writeflags(data, 'Environments');
 
-            var env = findEnvironmentByCNAME(data, options.environmentCNAME);
+            var env = findEnvironmentByCNAME(data, environmentCNAME);
 
             if (!env) {
-              if (options.deployType === 'manual') {
-                grunt.log.write('Environment with CNAME "' + options.environmentCNAME + '" does not exist but is not required for manual deployment');
-              } else {
                 grunt.log.error();
-                grunt.warn('Environment with CNAME "' + options.environmentCNAME + '" does not exist');
-              }
+                grunt.warn('Environment with CNAME "' + environmentCNAME + '" does not exist');
             }
 
             grunt.log.ok();
             return env;
-          });
+        });
     }
+
+    function checkEnvironmentExists() {
+      grunt.log.write('Checking that environment with CNAME "' + options.environmentCNAME + '" exists...');
+
+      return qAWSCheckEnvironment(options.environmentCNAME);
+    }
+    function checkBothEnvironments() {
+        grunt.log.write('Checking that environment with CNAME "' + options.environmentCNAME + '" exists...');
+
+        return qAWSCheckEnvironment(options.environmentCNAME)
+            .then(function (data) {
+                grunt.log.write('Checking that environment with CNAME "' + options.environmentCNAME2 + '" exists...');
+                return qAWSCheckEnvironment(options.environmentCNAME2)
+            });
+    }
+
 
     function checkApplicationExists() {
       grunt.log.write('Checking that application "' + options.applicationName + '" exists...');
@@ -507,14 +524,23 @@ module.exports = function (grunt) {
             }
 
             grunt.log.ok();
+
           });
     }
 
-    return checkApplicationExists()
-        .then(checkEnvironmentExists)
-        .then(uploadApplication)
-        .then(createApplicationVersion)
-        .then(invokeDeployType)
-        .then(done, done);
+    if(options.deployType == 'swapBothEnv') {
+        return checkApplicationExists()
+            .then(checkBothEnvironments)
+            .then(invokeDeployType)
+            .then(done, done);
+    } else {
+        return checkApplicationExists()
+            .then(checkEnvironmentExists)
+            .then(uploadApplication)
+            .then(createApplicationVersion)
+            .then(invokeDeployType)
+            .then(done, done);
+    }
   });
 };
+
